@@ -12,95 +12,181 @@ import harmonicTransformations as HT
 import utilFunctions as UF
 
 def analysis(inputFile='../../sounds/sax-phrase-short.wav', window='blackman', M=601, N=1024, t=-100, 
-	minSineDur=0.1, nH=100, minf0=350, maxf0=700, f0et=5, harmDevSlope=0.01, stocf=0.1):
-	"""
-	Analyze a sound with the harmonic plus stochastic model
-	inputFile: input sound file (monophonic with sampling rate of 44100)
-	window: analysis window type (rectangular, hanning, hamming, blackman, blackmanharris)	
-	M: analysis window size 
-	N: fft size (power of two, bigger or equal than M)
-	t: magnitude threshold of spectral peaks 
-	minSineDur: minimum duration of sinusoidal tracks
-	nH: maximum number of harmonics
-	minf0: minimum fundamental frequency in sound
-	maxf0: maximum fundamental frequency in sound
-	f0et: maximum error accepted in f0 detection algorithm                                                                                            
-	harmDevSlope: allowed deviation of harmonic tracks, higher harmonics have higher allowed deviation
-	stocf: decimation factor used for the stochastic approximation
-	returns inputFile: input file name; fs: sampling rate of input file,
-	        hfreq, hmag: harmonic frequencies, magnitude; mYst: stochastic residual
-	"""
+    minSineDur=0.1, nH=100, minf0=350, maxf0=700, f0et=5, harmDevSlope=0.01, stocf=0.1):
+    """
+    Analyze a sound with the harmonic plus stochastic model
+    inputFile: input sound file (monophonic with sampling rate of 44100)
+    window: analysis window type (rectangular, hanning, hamming, blackman, blackmanharris)    
+    M: analysis window size 
+    N: fft size (power of two, bigger or equal than M)
+    t: magnitude threshold of spectral peaks 
+    minSineDur: minimum duration of sinusoidal tracks
+    nH: maximum number of harmonics
+    minf0: minimum fundamental frequency in sound
+    maxf0: maximum fundamental frequency in sound
+    f0et: maximum error accepted in f0 detection algorithm                                                                                            
+    harmDevSlope: allowed deviation of harmonic tracks, higher harmonics have higher allowed deviation
+    stocf: decimation factor used for the stochastic approximation
+    returns inputFile: input file name; fs: sampling rate of input file,
+            hfreq, hmag: harmonic frequencies, magnitude; mYst: stochastic residual,
+            x: input sound
+    """
 
-	# size of fft used in synthesis
-	Ns = 512
+    # size of fft used in synthesis
+    Ns = 512
 
-	# hop size (has to be 1/4 of Ns)
-	H = 128
+    # hop size (has to be 1/4 of Ns)
+    H = 128
 
-	# read input sound
-	(fs, x) = UF.wavread(inputFile)
+    # read input sound
+    (fs, x) = UF.wavread(inputFile)
+#    print 'fs, x.size ==',fs, x.size
+    
+    # compute analysis window
+    w = get_window(window, M)
+#    print 'window ==',window
 
-	# compute analysis window
-	w = get_window(window, M)
+    # compute the harmonic plus stochastic model of the whole sound
+    hfreq, hmag, hphase, mYst = HPS.hpsModelAnal(x, fs, w, N, H, t, nH, minf0, maxf0, f0et, harmDevSlope, minSineDur, Ns, stocf)
+#    print 'hfreq.size, hmag.size, hphase.size, mYst.size ==', hfreq.size, hmag.size, hphase.size, mYst.size
 
-	# compute the harmonic plus stochastic model of the whole sound
-	hfreq, hmag, hphase, mYst = HPS.hpsModelAnal(x, fs, w, N, H, t, nH, minf0, maxf0, f0et, harmDevSlope, minSineDur, Ns, stocf)
+    # synthesize the harmonic plus stochastic model without original phases
+    y, yh, yst = HPS.hpsModelSynth(hfreq, hmag, np.array([]), mYst, Ns, H, fs)
+#    print 'y.size, yh.size, yst.size ==',y.size, yh.size, yst.size
 
-	# synthesize the harmonic plus stochastic model without original phases
-	y, yh, yst = HPS.hpsModelSynth(hfreq, hmag, np.array([]), mYst, Ns, H, fs)
+    # write output sound 
+    outputFile = 'output_sounds/' + os.path.basename(inputFile)[:-4] + '_hpsModel.wav'
+    UF.wavwrite(y,fs, outputFile)
 
-	# write output sound 
-	outputFile = 'output_sounds/' + os.path.basename(inputFile)[:-4] + '_hpsModel.wav'
-	UF.wavwrite(y,fs, outputFile)
+    # create figure to plot
+    plt.figure(figsize=(12, 9))
 
-	# create figure to plot
-	plt.figure(figsize=(12, 9))
+    # frequency range to plot
+    maxplotfreq = 15000.0
 
-	# frequency range to plot
-	maxplotfreq = 15000.0
+    # plot the input sound
+    plt.subplot(3,1,1)
+    plt.plot(np.arange(x.size)/float(fs), x)
+    plt.axis([0, x.size/float(fs), min(x), max(x)])
+    plt.ylabel('amplitude')
+    plt.xlabel('time (sec)')
+    plt.title('input sound: x')
 
-	# plot the input sound
-	plt.subplot(3,1,1)
-	plt.plot(np.arange(x.size)/float(fs), x)
-	plt.axis([0, x.size/float(fs), min(x), max(x)])
-	plt.ylabel('amplitude')
-	plt.xlabel('time (sec)')
-	plt.title('input sound: x')
+    # plot spectrogram stochastic compoment
+    plt.subplot(3,1,2)
+    numFrames = int(mYst[:,0].size)
+    sizeEnv = int(mYst[0,:].size)
+    frmTime = H*np.arange(numFrames)/float(fs)
+    binFreq = (.5*fs)*np.arange(sizeEnv*maxplotfreq/(.5*fs))/sizeEnv                      
+    plt.pcolormesh(frmTime, binFreq, np.transpose(mYst[:,:sizeEnv*maxplotfreq/(.5*fs)+1]))
+    plt.autoscale(tight=True)
 
-	# plot spectrogram stochastic compoment
-	plt.subplot(3,1,2)
-	numFrames = int(mYst[:,0].size)
-	sizeEnv = int(mYst[0,:].size)
-	frmTime = H*np.arange(numFrames)/float(fs)
-	binFreq = (.5*fs)*np.arange(sizeEnv*maxplotfreq/(.5*fs))/sizeEnv                      
-	plt.pcolormesh(frmTime, binFreq, np.transpose(mYst[:,:sizeEnv*maxplotfreq/(.5*fs)+1]))
-	plt.autoscale(tight=True)
+    # plot harmonic on top of stochastic spectrogram
+    if (hfreq.shape[1] > 0):
+        harms = hfreq*np.less(hfreq,maxplotfreq)
+        harms[harms==0] = np.nan
+        numFrames = int(harms[:,0].size)
+        frmTime = H*np.arange(numFrames)/float(fs) 
+        plt.plot(frmTime, harms, color='k', ms=3, alpha=1)
+        plt.xlabel('time (sec)')
+        plt.ylabel('frequency (Hz)')
+        plt.autoscale(tight=True)
+        plt.title('harmonics + stochastic spectrogram')
 
-	# plot harmonic on top of stochastic spectrogram
-	if (hfreq.shape[1] > 0):
-		harms = hfreq*np.less(hfreq,maxplotfreq)
-		harms[harms==0] = np.nan
-		numFrames = int(harms[:,0].size)
-		frmTime = H*np.arange(numFrames)/float(fs) 
-		plt.plot(frmTime, harms, color='k', ms=3, alpha=1)
-		plt.xlabel('time (sec)')
-		plt.ylabel('frequency (Hz)')
-		plt.autoscale(tight=True)
-		plt.title('harmonics + stochastic spectrogram')
+    # plot the output sound
+    plt.subplot(3,1,3)
+    plt.plot(np.arange(y.size)/float(fs), y)
+    plt.axis([0, y.size/float(fs), min(y), max(y)])
+    plt.ylabel('amplitude')
+    plt.xlabel('time (sec)')
+    plt.title('output sound: y')
 
-	# plot the output sound
-	plt.subplot(3,1,3)
-	plt.plot(np.arange(y.size)/float(fs), y)
-	plt.axis([0, y.size/float(fs), min(y), max(y)])
-	plt.ylabel('amplitude')
-	plt.xlabel('time (sec)')
-	plt.title('output sound: y')
+    plt.tight_layout()
+    plt.show(block=False)
 
-	plt.tight_layout()
-	plt.show(block=False)
+    return inputFile, fs, hfreq, hmag, mYst, x
 
-	return inputFile, fs, hfreq, hmag, mYst
 
+def transformation_synthesis_stereo(inputFile, fs, hfreq, hmag, mYst, freqScaling = np.array([0, 1.2, 2.01, 1.2, 2.679, .7, 3.146, .7]), 
+    freqStretching = np.array([0, 1, 2.01, 1, 2.679, 1.5, 3.146, 1.5]), timbrePreservation = 1, 
+    timeScaling = np.array([0, 0, 2.138, 2.138-1.0, 3.146, 3.146]),
+    inputSound=[]):
+    """
+    transform the analysis values returned by the analysis function and synthesize the sound
+    inputFile: name of input file
+    fs: sampling rate of input file    
+    hfreq, hmag: harmonic frequencies and magnitudes
+    mYst: stochastic residual
+    freqScaling: tuple (for L and R channels) of arrays of frequency scaling factors, in time-value pairs (value of 1 no scaling)
+    freqStretching: tuple (for L and R channels) of arrays of frequency stretching factors, in time-value pairs (value of 1 no stretching)
+    timbrePreservation: tuple (for L and R channels) of arrays of 1 preserves original timbre, 0 it does not
+    timeScaling: tuple (for L and R channels) of arrays of time scaling factors, in time-value pairs
+    inputSound: original sound, used for auto-attenuation of the output sound
+    """
+    
+    # size of fft used in synthesis
+    Ns = 512
+
+    # hop size (has to be 1/4 of Ns)
+    H = 128
+    
+    # frequency scaling of the harmonics 
+    hfreqtLeft , hmagtLeft  = HT.harmonicFreqScaling(hfreq, hmag, freqScaling[0], freqStretching[0], timbrePreservation[0], fs)
+    hfreqtRight, hmagtRight = HT.harmonicFreqScaling(hfreq, hmag, freqScaling[1], freqStretching[1], timbrePreservation[1], fs)
+
+    # time scaling the sound
+    yhfreqLeft , yhmagLeft , ystocEnvLeft  = HPST.hpsTimeScale(hfreqtLeft , hmagtLeft , mYst, timeScaling[0])
+    yhfreqRight, yhmagRight, ystocEnvRight = HPST.hpsTimeScale(hfreqtRight, hmagtRight, mYst, timeScaling[1])
+
+    # synthesis from the trasformed hps representation 
+    yLeft,  yhLeft,  ystLeft  = HPS.hpsModelSynth(yhfreqLeft , yhmagLeft , np.array([]), ystocEnvLeft , Ns, H, fs)
+    yRight, yhRight, ystRight = HPS.hpsModelSynth(yhfreqRight, yhmagRight, np.array([]), ystocEnvRight, Ns, H, fs)
+
+    # write output sound
+    outputFile = 'output_sounds/' + os.path.basename(inputFile)[:-4] + '_hpsModelTransformation.wav'
+    UF.wavwriteStereo(yLeft, yRight, fs, outputFile, inputSound)
+    
+    # create figure to plot
+    plt.figure(figsize=(12, 12))
+    
+    # frequency range to plot
+    maxplotfreq = 15000.0
+     
+    def plotTransformedSignals(channelName,subplot1,subplot2,yhfreq,ystocEnv,y):
+        # plot spectrogram of transformed stochastic compoment
+        plt.subplot(subplot1)
+        numFrames = int(ystocEnv[:,0].size)
+        sizeEnv = int(ystocEnv[0,:].size)
+        frmTime = H*np.arange(numFrames)/float(fs)
+        binFreq = (.5*fs)*np.arange(sizeEnv*maxplotfreq/(.5*fs))/sizeEnv                      
+        plt.pcolormesh(frmTime, binFreq, np.transpose(ystocEnv[:,:sizeEnv*maxplotfreq/(.5*fs)+1]))
+        plt.autoscale(tight=True)
+    
+        # plot transformed harmonic on top of stochastic spectrogram
+        if (yhfreq.shape[1] > 0):
+            harms = yhfreq*np.less(yhfreq,maxplotfreq)
+            harms[harms==0] = np.nan
+            numFrames = int(harms[:,0].size)
+            frmTime = H*np.arange(numFrames)/float(fs) 
+            plt.plot(frmTime, harms, color='k', ms=3, alpha=1)
+            plt.xlabel('time (sec)')
+            plt.ylabel('frequency (Hz)')
+            plt.autoscale(tight=True)
+            plt.title('harmonics + stochastic spectrogram (' + channelName + ')')
+
+        # plot the output sound
+        plt.subplot(subplot2)
+        plt.plot(np.arange(y.size)/float(fs), y)
+        plt.axis([0, y.size/float(fs), min(y), max(y)])
+        plt.ylabel('amplitude')
+        plt.xlabel('time (sec)')
+        plt.title('output sound: y (' + channelName + ')')
+
+    plotTransformedSignals('Left' , 411, 413, yhfreqLeft,  ystocEnvLeft,  yLeft)
+    plotTransformedSignals('Right', 412, 414, yhfreqRight, ystocEnvRight, yRight)
+
+    plt.tight_layout()
+    plt.show()
 
 def transformation_synthesis(inputFile, fs, hfreq, hmag, mYst, freqScaling = np.array([0, 1.2, 2.01, 1.2, 2.679, .7, 3.146, .7]), 
 	freqStretching = np.array([0, 1, 2.01, 1, 2.679, 1.5, 3.146, 1.5]), timbrePreservation = 1, 
@@ -175,11 +261,11 @@ def transformation_synthesis(inputFile, fs, hfreq, hmag, mYst, freqScaling = np.
 	plt.show()
 
 if __name__ == "__main__":
-	
-	# analysis
-	inputFile, fs, hfreq, hmag, mYst = analysis()
+    
+    # analysis
+    inputFile, fs, hfreq, hmag, mYst = analysis()
 
-	# transformation and synthesis
-	transformation_synthesis(inputFile, fs, hfreq, hmag, mYst)
+    # transformation and synthesis
+    transformation_synthesis(inputFile, fs, hfreq, hmag, mYst)
 
-	plt.show()
+    plt.show()
